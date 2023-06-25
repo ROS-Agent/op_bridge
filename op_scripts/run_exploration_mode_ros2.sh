@@ -4,8 +4,8 @@
 # No scenario required, the ego vehicle should explore the scene 
 #############################
 
-# export SIMULATOR_LOCAL_HOST="localhost"
-export SIMULATOR_LOCAL_HOST="192.168.11.5"
+export SIMULATOR_LOCAL_HOST="localhost"
+# export SIMULATOR_LOCAL_HOST="192.168.11.5"
 export SIMULATOR_PORT="2000"
 export TEAM_AGENT=${LEADERBOARD_ROOT}/op_bridge/op_ros2_agent.py
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
@@ -20,13 +20,16 @@ export AGENT_ROLE_NAME="hero"
 export OP_BRIDGE_MODE="free" 
 
 # CARLA town name or custom OpenDRIVE absolute path, when BRIDGE_MODE is free 
-export FREE_MAP_NAME="Town01" 
+export FREE_MAP_NAME="SUSTC_ParkingLot" 
 
 # Spawn point for the autonomous agent, when BRIDGE_MODE is free 
 # "x,y,z,roll,pitch,yaw"
 # Empty string means random starting position
 #export FREE_AGENT_POSE="175.4,195.14,0,0,0,180" 
-export FREE_AGENT_POSE=""
+export FREE_AGENT_POSE="-29.1,11.3,-4,0,0,90" #从a到b
+# export FREE_AGENT_POSE="-18,27,-4,0,0,-45" # 斜向倒车入库
+# export FREE_AGENT_POSE="-17.5,26.5,-4,0,0,0" # 横向倒车
 
-gnome-terminal -- bash -c roscore
+#gnome-terminal -- bash -c roscore
 python3 ${LEADERBOARD_ROOT}/op_bridge/op_bridge_ros2.py
+
