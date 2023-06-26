@@ -73,8 +73,8 @@ class AgentLoop(object):
 
             spectator = CarlaDataProvider.get_world().get_spectator()
             ego_trans = self.ego_vehicle.get_transform()
-            spectator.set_transform(carla.Transform(ego_trans.location + carla.Location(z=50),
-                                                        carla.Rotation(pitch=-90)))
+            # spectator.set_transform(carla.Transform(ego_trans.location + carla.Location(z=50),
+            #                                             carla.Rotation(pitch=-90)))
 
         if self.running:
             CarlaDataProvider.get_world().tick()
@@ -121,6 +121,7 @@ class WorldHandler(object):
                     _randomize = True                
             
                 CarlaDataProvider.request_new_actor('vehicle.toyota.prius', spawn_point, self._agent_role_name, random_location=_randomize)            
+                # CarlaDataProvider.request_new_actor('vehicle.tesla.model3', spawn_point, self._agent_role_name, random_location=_randomize)            
         else:
             print("Can't Load CARLA .. make sure that Simulator is running !!")  
 
