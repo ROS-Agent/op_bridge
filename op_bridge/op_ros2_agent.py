@@ -27,7 +27,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from rclpy.task import Future
 
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PoseStamped, TwistWithCovariance, TwistStamped, TwistWithCovarianceStamped
+from geometry_msgs.msg import PoseStamped, TwistWithCovariance, TwistStamped, TwistWithCovarianceStamped, AccelWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
 from rosgraph_msgs.msg import Clock
 from builtin_interfaces.msg import Time
@@ -39,6 +39,17 @@ from leaderboard.autoagents.autonomous_agent import AutonomousAgent, Track
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from autoware_auto_vehicle_msgs.msg import ControlModeReport, GearReport, SteeringReport, TurnIndicatorsReport, HazardLightsReport, VelocityReport
 from autoware_auto_control_msgs.msg import AckermannControlCommand
+
+# tf2坐标变换
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from geometry_msgs.msg import TransformStamped
+# 静态和动态坐标系广播器
+from tf2_ros import TransformBroadcaster
+from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+# 这里提供了ros里面四元数和欧拉角的转换
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
 
 def get_entry_point():
@@ -134,6 +145,19 @@ class Ros2Agent(AutonomousAgent):
         self.id_to_sensor_type_map = {}
         self.id_to_camera_info_map = {}
         self.cv_bridge = CvBridge()
+        
+        # FIXME:tf以及odometry
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self.ros2_node)
+        self.tf_broadcaster = StaticTransformBroadcaster(self.ros2_node)
+        self.odometry_pub = self.ros2_node.create_publisher(Odometry, '/localization/kinematic_state', 10)
+        self.reset_map_origin_subscriber = self.ros2_node.create_subscription(
+            String, 'resetOccGridOrigin', self.resetCmdCallback, 10) # 重置栅格地图原点
+        self.reset_map_origin_pub = self.ros2_node.create_publisher(
+            String, 'resetOccGridOrigin', 10) # 重置栅格地图原点
+        self.acce_pub = self.ros2_node.create_publisher(
+            AccelWithCovarianceStamped, "/localization/acceleration", 1)
+        
 
         # self.qos_profile = QoSProfile(depth=1)
         # self.qos_profile.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -256,6 +280,7 @@ class Ros2Agent(AutonomousAgent):
         if this_v > 0.0 and this_a > 0.0:
             # 向前加速
             cmd.reverse = False
+            # cmd.throttle = 0.2
             cmd.throttle = 0.2
             cmd.brake = 0.0
             # print('F +')
@@ -263,11 +288,12 @@ class Ros2Agent(AutonomousAgent):
             # 向前减速
             cmd.reverse = False
             cmd.throttle = 0.0
-            cmd.brake = 0.1
+            cmd.brake = 0.5
             # print('F -')
         elif this_v < 0.0 and this_a > 0.0:
             # 向后加速
             cmd.reverse = True
+            # cmd.throttle = 0.2
             cmd.throttle = 0.2
             cmd.brake = 0.0
             # print('B +')
@@ -275,11 +301,11 @@ class Ros2Agent(AutonomousAgent):
             # 向后减速
             cmd.reverse = True
             cmd.throttle = 0.0
-            cmd.brake = 0.1
+            cmd.brake = 0.5
             # print('B -')
         elif math.fabs(this_v) < 1e-6:
             cmd.throttle = 0.0
-            cmd.brake = 0.2
+            cmd.brake = 0.5
 
         self.current_control = cmd
         self.step_mode_possible = True
@@ -359,8 +385,8 @@ class Ros2Agent(AutonomousAgent):
                     'width': 1280, 'height': 720, 'fov': 100, 'id': 'Center'},
                    #    {'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 2.4, 'roll': 0.0, 'pitch': 0.0,
                    #     'yaw': 270.0, 'id': 'LIDAR'},
-                   {'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 3.0, 'roll': 0.0, 'pitch': 0.0,
-                    'yaw': 270.0, 'id': 'LIDAR'},
+                #    {'type': 'sensor.lidar.ray_cast', 'x': 0.0, 'y': 0.0, 'z': 3.0, 'roll': 0.0, 'pitch': 0.0,
+                #     'yaw': 270.0, 'id': 'LIDAR'},
                    {'type': 'sensor.other.gnss', 'x': 0.0,
                        'y': 0.0, 'z': 2.4, 'id': 'GPS'},
                    {'type': 'sensor.opendrive_map',
@@ -487,7 +513,97 @@ class Ros2Agent(AutonomousAgent):
         imu_msg.orientation.w = quaternion[3]
 
         self.vehicle_imu_publisher.publish(imu_msg)
-
+        
+        # FIXME:增加发布tf以及Odometry问题,发布ACC给控制模块
+        if self.ego_vehicle_actor is not None:
+            t = TransformStamped()
+            t.header = self.get_header()
+            t.header.frame_id = "map"
+            t.child_frame_id = "base_link"
+            ego_trans = self.ego_vehicle_actor.get_transform()
+            t.transform.translation.x = ego_trans.location.x
+            t.transform.translation.y = -ego_trans.location.y  # 转成ROS右手坐标系
+            # print("ego vehicle z:", ego_trans.location.z)
+            q = quaternion_from_euler(
+                0, 0, math.radians(-ego_trans.rotation.yaw))
+            t.transform.rotation.x = q[0]
+            t.transform.rotation.y = q[1]
+            t.transform.rotation.z = q[2]
+            t.transform.rotation.w = q[3]
+            self.tf_broadcaster.sendTransform(t)
+            # 发布odometry
+            odom_msg = Odometry()
+            odom_msg.header = self.get_header()
+            odom_msg.header.frame_id = "map"
+            odom_msg.child_frame_id = "base_link"
+            # 位姿
+            odom_msg.pose.pose.position.x = t.transform.translation.x
+            odom_msg.pose.pose.position.y = t.transform.translation.y
+            # 四元数转欧拉角
+            quat = t.transform.rotation
+            tmp_quat = [quat.x, quat.y, quat.z, quat.w]
+            euler_angles = euler_from_quaternion(tmp_quat)
+            target_quat = quaternion_from_euler(0, 0, euler_angles[2])
+            odom_msg.pose.pose.orientation.x = target_quat[0]
+            odom_msg.pose.pose.orientation.y = target_quat[1]
+            odom_msg.pose.pose.orientation.z = target_quat[2]
+            odom_msg.pose.pose.orientation.w = target_quat[3]
+            # 线速度和角速度, 这里才需要转化。暂时设置成0，不管用
+            # odom_msg.twist.twist.angular.x = data.gyroscope.x
+            # odom_msg.twist.twist.angular.y = -data.gyroscope.y
+            # odom_msg.twist.twist.angular.z = -data.gyroscope.z
+            odom_msg.twist.twist.angular.x = -data[3]
+            odom_msg.twist.twist.angular.y = data[4]
+            odom_msg.twist.twist.angular.z = -data[5]
+            if self.ego_vehicle_actor is not None:
+                vel = self.ego_vehicle_actor.get_velocity()
+                # odom_msg.twist.twist.linear.x = vel.x
+                # odom_msg.twist.twist.linear.y = -vel.y
+                # odom_msg.twist.twist.linear.z = vel.z
+            # print(f"odom_msg.twist.twist.angular.x:{odom_msg.twist.twist.angular.x}")
+            self.odometry_pub.publish(odom_msg)
+            
+            # 发布加速度消息，角加速度和线加速度
+            acc_msg = AccelWithCovarianceStamped()
+            acc_msg.header = self.get_header()
+            acc_msg.header.frame_id = "base_link"
+            # acc_msg.accel.accel.linear.x = data.accelerometer.x
+            # acc_msg.accel.accel.linear.y = -data.accelerometer.y
+            # acc_msg.accel.accel.linear.z = data.accelerometer.z
+            acc_msg.accel.accel.linear.x = data[0]
+            acc_msg.accel.accel.linear.y = -data[1]
+            acc_msg.accel.accel.linear.z = data[2]
+            # self.yaw_new = math.radians(euler_angles[2])
+            # acc_yaw = (self.yaw_new - self.yaw_old) * 1/20
+            # acc_msg.accel.accel.angular.z = acc_yaw
+            # self.yaw_old = self.yaw_new
+            self.acce_pub.publish(acc_msg)
+            
+    #FIXME:新增
+    def set_ego_vehicle(self, ego):
+        self.ego_vehicle_actor = ego
+    
+    # FIXME:新增
+    def resetCmdCallback(self, msg: String):
+        # 发布静态坐标变换，carla_world -> fake_ego_vehilce -> OccGrid_origin.
+        if msg.data == 'reset':
+            # 发布两个tf2静态坐标变换
+            # self.node.get_logger().info(f'publish tf2 {frame_id} -> {child_frame_id}!')
+            if self.ego_vehicle_actor is not None:
+                # 发布 ego_vehicle -> OccGrid_origin
+                t2 = TransformStamped()
+                t2.header = self.get_header()
+                t2.header.frame_id = "base_link"
+                t2.child_frame_id = "fake_OccGrid_origin"
+                t2.transform.translation.x = -12.3768
+                t2.transform.translation.y = -12.3768
+                self.tf_broadcaster.sendTransform(t2)
+                self.ros2_node.get_logger().info(
+                    f'publish static tf2 {t2.header.frame_id} -> {t2.child_frame_id}!')
+                msg = String()
+                msg.data = "to_pub_map"
+                self.reset_map_origin_pub.publish(msg)
+                
     def publish_can(self, sensor_id, data):
         """
         publish can data

@@ -143,6 +143,8 @@ class AgentHandler(object):
         if self.ego_vehicle is not None:
             print("Ego Vehicle: " , self.ego_vehicle.attributes['role_name'])
             self._agent_wrapper.setup_sensors(self.ego_vehicle, False)
+            # FIXME:新增
+            self.agent_instance.set_ego_vehicle(self.ego_vehicle)
         else:
             print("Can't Load Ego Vehicle !! Agent will exit ")
             CarlaDataProvider.cleanup()
@@ -169,7 +171,8 @@ class AgentHandler(object):
                     if snapshot:
                         timestamp = snapshot.timestamp
                 if timestamp:
-                    self.agent_loop._tick_agent(timestamp)                
+                    self.agent_loop._tick_agent(timestamp)  
+                    # time.sleep(1/20)              
         except Exception as e:        
             traceback.print_exc()
     
